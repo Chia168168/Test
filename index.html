@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TENG 圖片處理工具 v2.1 - 動態按鈕與輸入優化版</title>
+    <title>TENG 圖片處理工具 v2.2 - 批次處理優化版</title>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/heic2any@0.0.4/dist/heic2any.min.js"></script>
     <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -310,7 +310,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>TENG 圖片處理工具 <span class="version">v2.1 - 動態按鈕與輸入優化版</span></h1>
+        <h1>TENG 圖片處理工具 <span class="version">v2.2 - 批次處理優化版</span></h1>
         
         <div class="section">
             <label>處理模式</label>
@@ -1214,9 +1214,40 @@
             document.getElementById('progressTitle').textContent = '圖片轉 Base64';
             updateProgress(0, totalImages);
 
-            for (let i = 0; i < originalImages.length; i++) {
-                const item = originalImages[i];
-                if (item.type !== 'image') continue;
+            async function processSingleImage(index) {
+                if (index >= originalImages.length) {
+                    // 所有圖片處理完成
+                    document.getElementById('progressContainer').style.display = 'none';
+                    const downloadButton = document.getElementById('downloadButton');
+                    downloadButton.style.display = 'block';
+
+                    if (totalImages === 1) {
+                        const { base64, name } = base64Data[0];
+                        downloadBlob = new Blob([base64], { type: 'text/plain' });
+                        downloadFileName = `${name}.txt`;
+                        downloadButton.textContent = '下載 Base64 檔案';
+                    } else {
+                        try {
+                            updateProgress(processedCount, totalImages, '生成ZIP檔案中...');
+                            downloadBlob = await zip.generateAsync({ type: 'blob' });
+                            downloadFileName = 'base64_files.zip';
+                            downloadButton.textContent = '下載 Base64 ZIP 壓縮檔';
+                        } catch (err) {
+                            showError(`生成 Base64 ZIP 檔案失敗：${err.message}`);
+                        }
+                    }
+
+                    enableUI();
+                    showSuccess('Base64轉換完成！');
+                    return;
+                }
+
+                const item = originalImages[index];
+                if (item.type !== 'image') {
+                    // 跳過非圖片檔案，處理下一個
+                    setTimeout(() => processSingleImage(index + 1), 10);
+                    return;
+                }
 
                 processedCount++;
                 updateProgress(processedCount, totalImages, item.file.name);
@@ -1239,37 +1270,17 @@
                     if (totalImages > 1) {
                         zip.file(`${item.file.name}.txt`, base64String);
                     }
-                    
-                    if (processedCount % 3 === 0) {
-                        await new Promise(resolve => setTimeout(resolve, 10));
-                    }
+
+                    // 處理下一個檔案
+                    setTimeout(() => processSingleImage(index + 1), 10);
                 } catch (err) {
                     showError(`圖片 ${item.file.name} 轉 Base64 失敗：${err.message}`);
+                    setTimeout(() => processSingleImage(index + 1), 10);
                 }
             }
 
-            document.getElementById('progressContainer').style.display = 'none';
-            const downloadButton = document.getElementById('downloadButton');
-            downloadButton.style.display = 'block';
-
-            if (totalImages === 1) {
-                const { base64, name } = base64Data[0];
-                downloadBlob = new Blob([base64], { type: 'text/plain' });
-                downloadFileName = `${name}.txt`;
-                downloadButton.textContent = '下載 Base64 檔案';
-            } else {
-                try {
-                    updateProgress(processedCount, totalImages, '生成ZIP檔案中...');
-                    downloadBlob = await zip.generateAsync({ type: 'blob' });
-                    downloadFileName = 'base64_files.zip';
-                    downloadButton.textContent = '下載 Base64 ZIP 壓縮檔';
-                } catch (err) {
-                    showError(`生成 Base64 ZIP 檔案失敗：${err.message}`);
-                }
-            }
-            
-            enableUI();
-            showSuccess('Base64轉換完成！');
+            // 開始處理第一個檔案
+            processSingleImage(0);
         }
 
         async function processBase64ToImage() {
