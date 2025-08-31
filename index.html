@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TENG 圖片處理工具 v2.0 - 動態按鈕優化版</title>
+    <title>TENG 圖片處理工具 v1.9 - 效能優化版</title>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/heic2any@0.0.4/dist/heic2any.min.js"></script>
-    <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
-    <script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+    <script src="https://unpkg.com/heic2any@2.1.0/dist/heic2any.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <style>
         :root {
             --primary-color: #0033A0;
@@ -310,7 +310,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>TENG 圖片處理工具 <span class="version">v2.0 - 動態按鈕優化版</span></h1>
+        <h1>TENG 圖片處理工具 <span class="version">v1.9 - 效能優化版</span></h1>
         
         <div class="section">
             <label>處理模式</label>
@@ -425,7 +425,7 @@
         </div>
         
         <div class="section">
-            <div class="file-button-container" id="processButtonsContainer">
+            <div class="file-button-container">
                 <button id="resizeButton" class="process-button mode-specific" data-mode="resize" onclick="processResize()">調整尺寸與格式</button>
                 <button id="toBase64Button" class="process-button mode-specific" data-mode="base64" onclick="processImageToBase64()">圖片轉 Base64</button>
                 <button id="fromBase64Button" class="process-button mode-specific" data-mode="base64" onclick="processBase64ToImage()">Base64 轉圖片</button>
@@ -482,7 +482,6 @@
         let startTime = null;
         let processedCount = 0;
         let totalToProcess = 0;
-        let selectedFileType = null; // 追蹤選擇的檔案類型 ('image', 'base64', 或 null)
 
         // 檢查瀏覽器是否支援 webkitdirectory
         function checkDirectorySupport() {
@@ -524,34 +523,13 @@
             }
         }
 
-        // 更新處理按鈕的顯示狀態
-        function updateProcessButtons() {
-            const mode = document.querySelector('.mode-button.active').dataset.mode;
-            const resizeButton = document.getElementById('resizeButton');
-            const toBase64Button = document.getElementById('toBase64Button');
-            const fromBase64Button = document.getElementById('fromBase64Button');
-
-            // 預設隱藏所有按鈕
-            resizeButton.style.display = 'none';
-            toBase64Button.style.display = 'none';
-            fromBase64Button.style.display = 'none';
-
-            if (mode === 'resize') {
-                // 尺寸調整模式：僅顯示 resizeButton
-                resizeButton.style.display = 'block';
-            } else if (mode === 'base64') {
-                // Base64 模式：根據 selectedFileType 顯示按鈕
-                if (selectedFileType === 'image') {
-                    toBase64Button.style.display = 'block';
-                } else if (selectedFileType === 'base64') {
-                    fromBase64Button.style.display = 'block';
-                } else {
-                    // 無檔案選擇時，顯示兩個 Base64 按鈕（因為可能輸入 Base64 字串）
-                    toBase64Button.style.display = 'block';
-                    fromBase64Button.style.display = 'block';
-                }
+        // 初始化模式
+        window.onload = function() {
+            switchMode('resize');
+            if (!checkDirectorySupport()) {
+                showError('警告：此瀏覽器不支援資料夾選擇，請使用 Chrome、Edge 或 Safari！');
             }
-        }
+        };
 
         // 模式切換
         function switchMode(mode) {
@@ -571,7 +549,7 @@
                 btn.classList.toggle('active', btn.dataset.value === currentFormatValue);
             });
             toggleQualityContainer();
-            clearFiles(); // 清空檔案並重置按鈕
+            clearFiles();
             if (mode === 'resize') {
                 switchDimensionMode(currentDimensionMode);
             }
@@ -636,10 +614,23 @@
                 return;
             }
             
+            // 釋放記憶體
+            originalImages.forEach(img => {
+                if (img.img && img.img.src) {
+                    URL.revokeObjectURL(img.img.src);
+                }
+            });
+            
+            // 釋放處理後的 blob URL
+            processedBlobs.forEach(blob => {
+                if (blob.url) {
+                    URL.revokeObjectURL(blob.url);
+                }
+            });
+            
             originalImages = [];
             processedBlobs = [];
             base64Data = [];
-            selectedFileType = null; // 重置檔案類型
             document.getElementById('fileList').innerHTML = '';
             document.getElementById('previewContainer').innerHTML = '';
             document.getElementById('base64OutputContainer').innerHTML = '';
@@ -663,7 +654,6 @@
             document.querySelectorAll('.format-button').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.value === currentFormatValue);
             });
-            updateProcessButtons(); // 更新按鈕狀態
             updateFileList();
         }
 
@@ -737,20 +727,16 @@
                 }
             }
 
-            // 設置檔案類型並更新按鈕
-            selectedFileType = type;
-            updateProcessButtons();
-
             // 顯示載入中的狀態
             document.querySelector('.status-indicator').className = 'status-indicator status-processing';
             document.getElementById('fileCount').textContent = validFiles.length;
             
-            // 分批處理檔案
+            // 分批處理檔案，避免阻塞UI
             processFilesInBatches(validFiles, type, 0);
         }
 
         function processFilesInBatches(files, type, startIndex) {
-            const batchSize = 5;
+            const batchSize = 5; // 每批處理5個檔案
             const endIndex = Math.min(startIndex + batchSize, files.length);
             
             for (let i = startIndex; i < endIndex; i++) {
@@ -763,7 +749,12 @@
                 if (type === 'image') {
                     const isHeicHeif = file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif');
                     if (isHeicHeif) {
-                        heic2any({ blob: file, toType: 'image/png' })
+                        // 使用較新版本的 heic2any
+                        heic2any({ 
+                            blob: file, 
+                            toType: 'image/png',
+                            quality: 0.8 // 添加品質參數
+                        })
                             .then(result => {
                                 const reader = new FileReader();
                                 reader.onload = function(e) {
@@ -776,14 +767,10 @@
                             })
                             .catch(err => {
                                 showError(`HEIC/HEIF 轉換失敗 (${file.name})：${err.message}`);
-                                const reader = new FileReader();
-                                reader.onload = function(e) {
-                                    handleImageLoad(file, e.target.result, originalImages.length, 'image');
-                                    if (i === files.length - 1) {
-                                        document.querySelector('.status-indicator').className = 'status-indicator status-complete';
-                                    }
-                                };
-                                reader.readAsDataURL(file);
+                                // 不再嘗試處理原始 HEIC 檔案，因為瀏覽器無法直接處理
+                                if (i === files.length - 1) {
+                                    document.querySelector('.status-indicator').className = 'status-indicator status-complete';
+                                }
                             });
                     } else {
                         const reader = new FileReader();
@@ -807,6 +794,7 @@
                 }
             }
             
+            // 如果還有更多檔案，設置下一個批次
             if (endIndex < files.length) {
                 setTimeout(() => {
                     processFilesInBatches(files, type, endIndex);
@@ -1034,8 +1022,9 @@
                 progressText.textContent = `處理中：${current}/${total}`;
             }
             
+            // 計算剩餘時間
             if (startTime && current > 0) {
-                const elapsedTime = (Date.now() - startTime) / 1000;
+                const elapsedTime = (Date.now() - startTime) / 1000; // 秒
                 const timePerItem = elapsedTime / current;
                 const remainingItems = total - current;
                 const remainingTime = timePerItem * remainingItems;
@@ -1120,6 +1109,7 @@
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 
+                // 設置背景色（非透明格式）
                 if (format !== 'image/png') {
                     ctx.fillStyle = 'white';
                     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1132,6 +1122,11 @@
                     const originalName = item.file.name.split('.').slice(0, -1).join('.');
                     const extension = format.split('/')[1];
                     const newFileName = `${originalName}_${width}x${height}.${extension}`;
+                    
+                    // 釋放 canvas 記憶體
+                    canvas.width = 0;
+                    canvas.height = 0;
+                    
                     processedBlobs.push({ blob, name: newFileName });
 
                     if (totalImages > 1) {
@@ -1139,12 +1134,14 @@
                     }
 
                     const thumbnail = document.createElement('img');
-                    thumbnail.src = URL.createObjectURL(blob);
+                    const thumbnailUrl = URL.createObjectURL(blob);
+                    thumbnail.src = thumbnailUrl;
                     thumbnail.className = 'thumbnail';
                     thumbnail.dataset.index = i;
                     thumbnail.title = newFileName;
                     document.getElementById('previewContainer').appendChild(thumbnail);
                     
+                    // 每處理5個檔案就讓UI有機會更新
                     if (processedCount % 5 === 0) {
                         await new Promise(resolve => setTimeout(resolve, 10));
                     }
@@ -1164,7 +1161,13 @@
             } else {
                 try {
                     updateProgress(processedCount, totalImages, '生成ZIP檔案中...');
-                    downloadBlob = await zip.generateAsync({ type: 'blob' });
+                    downloadBlob = await zip.generateAsync({ 
+                        type: 'blob',
+                        compression: "DEFLATE",
+                        compressionOptions: {
+                            level: 6
+                        }
+                    });
                     downloadFileName = 'processed_images.zip';
                     downloadButton.textContent = '下載 ZIP 壓縮檔';
                 } catch (err) {
@@ -1177,7 +1180,7 @@
         }
 
         async function processImageToBase64() {
-            if (selectedFileType !== 'image' || !originalImages.some(item => item.type === 'image')) {
+            if (originalImages.length === 0 || !originalImages.some(item => item.type === 'image')) {
                 showError('請先選擇圖片檔案！');
                 return;
             }
@@ -1209,6 +1212,11 @@
 
                 try {
                     const base64String = canvas.toDataURL(currentFormatValue);
+                    
+                    // 釋放 canvas 記憶體
+                    canvas.width = 0;
+                    canvas.height = 0;
+                    
                     base64Data.push({ name: item.file.name, base64: base64String });
 
                     const outputDiv = document.createElement('div');
@@ -1220,6 +1228,7 @@
                         zip.file(`${item.file.name}.txt`, base64String);
                     }
                     
+                    // 每處理3個檔案就讓UI有機會更新
                     if (processedCount % 3 === 0) {
                         await new Promise(resolve => setTimeout(resolve, 10));
                     }
@@ -1240,7 +1249,13 @@
             } else {
                 try {
                     updateProgress(processedCount, totalImages, '生成ZIP檔案中...');
-                    downloadBlob = await zip.generateAsync({ type: 'blob' });
+                    downloadBlob = await zip.generateAsync({ 
+                        type: 'blob',
+                        compression: "DEFLATE",
+                        compressionOptions: {
+                            level: 6
+                        }
+                    });
                     downloadFileName = 'base64_files.zip';
                     downloadButton.textContent = '下載 Base64 ZIP 壓縮檔';
                 } catch (err) {
@@ -1258,14 +1273,15 @@
             const qualityInput = parseInt(document.getElementById('qualityInput').value);
             const quality = currentQualityValue === 'custom' ? (qualityInput / 100) || 0.9 : parseFloat(currentQualityValue);
             const base64Files = originalImages.filter(item => item.type === 'base64');
+            const prefixes = [
+                'data:image/jpeg;base64,',
+                'data:image/png;base64,',
+                'data:image/webp;base64,',
+                'data:image/gif;base64,'
+            ];
 
             if (!base64String && base64Files.length === 0) {
                 showError('請輸入 Base64 字串或選擇 Base64 檔案！');
-                return;
-            }
-
-            if (selectedFileType === 'image' && !base64String) {
-                showError('請選擇 Base64 檔案或輸入 Base64 字串！');
                 return;
             }
 
@@ -1286,12 +1302,6 @@
                 updateProgress(processedCount, totalItems, 'Base64字串');
 
                 let validBase64 = base64String;
-                const prefixes = [
-                    'data:image/jpeg;base64,',
-                    'data:image/png;base64,',
-                    'data:image/webp;base64,',
-                    'data:image/gif;base64,'
-                ];
                 if (!base64String.startsWith('data:image/')) {
                     for (let prefix of prefixes) {
                         const testString = prefix + base64String;
@@ -1317,11 +1327,17 @@
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(img, 0, 0);
                     const blob = await new Promise(resolve => canvas.toBlob(resolve, format, format === 'image/png' ? 1.0 : quality));
+                    
+                    // 釋放 canvas 記憶體
+                    canvas.width = 0;
+                    canvas.height = 0;
+                    
                     const fileName = `converted_image_${Date.now()}.${format.split('/')[1]}`;
                     processedBlobs.push({ blob, name: fileName });
 
                     const thumbnail = document.createElement('img');
-                    thumbnail.src = URL.createObjectURL(blob);
+                    const thumbnailUrl = URL.createObjectURL(blob);
+                    thumbnail.src = thumbnailUrl;
                     thumbnail.className = 'thumbnail';
                     thumbnail.title = fileName;
                     document.getElementById('previewContainer').appendChild(thumbnail);
@@ -1359,6 +1375,11 @@
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(img, 0, 0);
                     const blob = await new Promise(resolve => canvas.toBlob(resolve, format, format === 'image/png' ? 1.0 : quality));
+                    
+                    // 釋放 canvas 記憶體
+                    canvas.width = 0;
+                    canvas.height = 0;
+                    
                     const originalName = item.file.name.split('.').slice(0, -1).join('.');
                     const extension = format.split('/')[1];
                     const newFileName = `${originalName}.${extension}`;
@@ -1366,12 +1387,14 @@
                     zip.file(newFileName, blob);
 
                     const thumbnail = document.createElement('img');
-                    thumbnail.src = URL.createObjectURL(blob);
+                    const thumbnailUrl = URL.createObjectURL(blob);
+                    thumbnail.src = thumbnailUrl;
                     thumbnail.className = 'thumbnail';
                     thumbnail.dataset.index = originalImages.indexOf(item);
                     thumbnail.title = newFileName;
                     document.getElementById('previewContainer').appendChild(thumbnail);
                     
+                    // 每處理3個檔案就讓UI有機會更新
                     if (processedCount % 3 === 0) {
                         await new Promise(resolve => setTimeout(resolve, 10));
                     }
@@ -1383,7 +1406,13 @@
             if (base64Files.length > 0) {
                 try {
                     updateProgress(processedCount, totalItems, '生成ZIP檔案中...');
-                    const zipBlob = await zip.generateAsync({ type: 'blob' });
+                    const zipBlob = await zip.generateAsync({ 
+                        type: 'blob',
+                        compression: "DEFLATE",
+                        compressionOptions: {
+                            level: 6
+                        }
+                    });
                     const downloadButton = document.getElementById('downloadButton');
                     downloadButton.style.display = 'block';
                     downloadBlob = zipBlob;
@@ -1398,15 +1427,6 @@
             enableUI();
             showSuccess('Base64轉圖片完成！');
         }
-
-        // 初始化
-        window.onload = function() {
-            switchMode('resize');
-            updateProcessButtons();
-            if (!checkDirectorySupport()) {
-                showError('警告：此瀏覽器不支援資料夾選擇，請使用 Chrome、Edge 或 Safari！');
-            }
-        };
     </script>
 </body>
 </html>
